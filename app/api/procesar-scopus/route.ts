@@ -57,9 +57,19 @@ function getBestColumnMatch(target: string, columns: string[]) {
 
 export async function POST(req: Request) {
   try {
-    const { apiKey, fileBase, fileMeta, columns } = await req.json();
+    const formData = await req.formData();
+    
+    const apiKey = formData.get('apiKey') as string | null;
+    const columnsStr = formData.get('columns') as string | null;
+    const fileBase = formData.get('fileBase') as File | null;
+    const fileMeta = formData.get('fileMeta') as File | null;
+
     if (!apiKey) return NextResponse.json({ error: "Falta API Key" }, { status: 400 });
 
+    let columns: string[] = [];
+    if (columnsStr) {
+      try { columns = JSON.parse(columnsStr); } catch (e) {}
+    }
     const FINAL_COLUMNS = columns && columns.length > 0 ? columns : [];
 
     const rawEntries = await fetchScopusData(apiKey);
@@ -99,7 +109,8 @@ export async function POST(req: Request) {
     });
 
     if (fileBase) {
-      const baseBuffer = Buffer.from(fileBase.split(',')[1], 'base64');
+      const arrayBuffer = await fileBase.arrayBuffer();
+      const baseBuffer = Buffer.from(arrayBuffer);
       const workbookBase = XLSX.read(baseBuffer, { type: 'buffer' });
       const baseData: any[] = XLSX.utils.sheet_to_json(workbookBase.Sheets[workbookBase.SheetNames[0]]);
       const existingIds = new Set(baseData.map(row => String(row['Scopus ID'])));
@@ -107,7 +118,8 @@ export async function POST(req: Request) {
     }
 
     if (fileMeta) {
-      const metaBuffer = Buffer.from(fileMeta.split(',')[1], 'base64');
+      const arrayBuffer = await fileMeta.arrayBuffer();
+      const metaBuffer = Buffer.from(arrayBuffer);
       const workbookMeta = XLSX.read(metaBuffer, { type: 'buffer' });
       const metaData: any[] = XLSX.utils.sheet_to_json(workbookMeta.Sheets[workbookMeta.SheetNames[0]]);
       

@@ -125,10 +125,34 @@ export default function GestorBibliometria() {
         setResultData({ count: processed.length, file: excelBase64, preview: processed.slice(0, 5) });
         setStatus('success');
 
+      } else if (activeTab === 'scopus') {
+        
+        // --- NUEVO ENRUTAMIENTO CON FORMDATA PARA SCOPUS ---
+        const formData = new FormData();
+        formData.append('apiKey', apiKey);
+        formData.append('columns', JSON.stringify(columns));
+        
+        if (file1) formData.append('fileBase', file1);
+        if (file2) formData.append('fileMeta', file2);
+
+        const response = await fetch('/api/procesar-scopus', {
+          method: 'POST',
+          body: formData 
+          // Ojo: El navegador establece automáticamente el header 'multipart/form-data'
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error en el servidor');
+        
+        setResultData({ count: data.nuevos_registros, file: data.file, preview: data.previewData });
+        setStatus('success');
+
       } else {
+        
+        // --- MANTENEMOS BASE64 PARA WOS Y SCIELO ---
         const payload: any = { apiKey, columns }; 
-        if (file1) payload[activeTab === 'wos' ? 'fileWos' : activeTab === 'scielo' ? 'fileScielo' : 'fileBase'] = await toBase64(file1);
-        if (file2) payload[activeTab === 'wos' || activeTab === 'scielo' ? 'fileIds' : 'fileMeta'] = await toBase64(file2);
+        if (file1) payload[activeTab === 'wos' ? 'fileWos' : 'fileScielo'] = await toBase64(file1);
+        if (file2) payload[activeTab === 'wos' ? 'fileIds' : 'fileMeta'] = await toBase64(file2); // SciELO también enviará su archivo 2 en Base64
 
         const response = await fetch(`/api/procesar-${activeTab}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -136,6 +160,7 @@ export default function GestorBibliometria() {
 
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Error en el servidor');
+        
         setResultData({ count: data.nuevos_registros, file: data.file, preview: data.previewData });
         setStatus('success');
       }

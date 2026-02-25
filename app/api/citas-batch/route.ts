@@ -42,7 +42,6 @@ export async function POST(req: Request) {
         delete updatedPaper.cleanId; 
         
         results.push(updatedPaper);
-        // Respiro exacto que tenías en Streamlit
         await new Promise(r => setTimeout(r, 50)); 
     }
     

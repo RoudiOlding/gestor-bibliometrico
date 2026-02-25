@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import Fuse from 'fuse.js';
 
-// Borramos el FINAL_COLUMNS hardcodeado de aquí arriba
-
 async function fetchScopusData(apiKey: string) {
   const baseUrl = "https://api.elsevier.com/content/search/scopus";
   const query = "AF-ID(60078115)";
@@ -59,7 +57,6 @@ function getBestColumnMatch(target: string, columns: string[]) {
 
 export async function POST(req: Request) {
   try {
-    // 💡 RECIBIMOS LAS COLUMNAS DINÁMICAS DEL FRONTEND AQUÍ
     const { apiKey, fileBase, fileMeta, columns } = await req.json();
     if (!apiKey) return NextResponse.json({ error: "Falta API Key" }, { status: 400 });
 
@@ -72,7 +69,6 @@ export async function POST(req: Request) {
       const { allAuthors, ulimaAuthors, idsList, numAuthors } = processAuthors(entry.author);
 
       const baseRow: any = {};
-      // 💡 CREAR LA FILA CON LA ESTRUCTURA DINÁMICA
       FINAL_COLUMNS.forEach((col: string) => baseRow[col] = "");
 
       baseRow['Scopus ID'] = eidClean ? `2-s2.0-${eidClean}` : "";
@@ -174,7 +170,6 @@ export async function POST(req: Request) {
         newRow['Scopus Author Id'] = mapIds[auUlima] || '';
         delete newRow.EID_TEMP;
         
-        // 💡 FILTRAR PARA QUE SOLO QUEDEN LAS COLUMNAS REQUERIDAS
         const orderedRow: any = {};
         FINAL_COLUMNS.forEach((col: string) => {
             orderedRow[col] = newRow[col];

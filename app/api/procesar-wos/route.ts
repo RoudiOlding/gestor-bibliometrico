@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 
-// Borramos el FINAL_COLUMNS hardcodeado de aquí arriba
-
 function extraerAutoresUlima(addressesText: string) {
   if (!addressesText) return [];
   const regex = /\[(.*?)\]\s*Univ\s*Lima/gi;
@@ -24,13 +22,11 @@ function limpiezaId(valor: string) {
 
 export async function POST(req: Request) {
   try {
-    // 💡 RECIBIMOS LAS COLUMNAS DINÁMICAS DEL FRONTEND AQUÍ
     const { fileWos, fileIds, columns } = await req.json();
     if (!fileWos || !fileIds) return NextResponse.json({ error: "Faltan archivos" }, { status: 400 });
 
     const FINAL_COLUMNS = columns && columns.length > 0 ? columns : [];
 
-    // 1. Leer archivos
     const wosBuffer = Buffer.from(fileWos.split(',')[1], 'base64');
     const wosWorkbook = XLSX.read(wosBuffer, { type: 'buffer' });
     const dfWosRaw = XLSX.utils.sheet_to_json(wosWorkbook.Sheets[wosWorkbook.SheetNames[0]]);
@@ -39,7 +35,6 @@ export async function POST(req: Request) {
     const idsWorkbook = XLSX.read(idsBuffer, { type: 'buffer' });
     const dfListaIds = XLSX.utils.sheet_to_json(idsWorkbook.Sheets[idsWorkbook.SheetNames[0]]);
 
-    // 2. Procesar Lista de IDs Existentes
     let colIdLista = Object.keys(dfListaIds[0] || {}).find(c => 
       ['id', 'wos id', 'wos_id', 'ut'].includes(c.toLowerCase())
     );
@@ -47,7 +42,6 @@ export async function POST(req: Request) {
 
     const idsExistentes = new Set(dfListaIds.map((row: any) => limpiezaId(row[colIdLista])).filter(Boolean));
 
-    // 3. Procesar Descarga WoS
     const colUt = Object.keys(dfWosRaw[0] || {}).find(c => 
       c.toUpperCase().includes('UT') && c.toUpperCase().includes('WOS')
     ) || 'UT (Unique WOS ID)';
@@ -57,7 +51,6 @@ export async function POST(req: Request) {
       return idClean && !idsExistentes.has(idClean);
     });
 
-    // 4. Mapeo y Explosión
     const filasExpandidas: any[] = [];
     
     nuevosReales.forEach((filaWos: any) => {
@@ -65,7 +58,6 @@ export async function POST(req: Request) {
       const autoresUlima = extraerAutoresUlima(addresses);
       
       const filaBase: any = {};
-      // 💡 CREAR LA FILA CON LA ESTRUCTURA DINÁMICA
       FINAL_COLUMNS.forEach((col: string) => filaBase[col] = "");
       
       filaBase['WOS ID'] = filaWos[colUt] || '';
@@ -107,7 +99,6 @@ export async function POST(req: Request) {
       const today = new Date();
       filaBase['F ingreso/actualización'] = `${today.getDate().toString().padStart(2, '0')}/${(today.getMonth()+1).toString().padStart(2, '0')}/${today.getFullYear()}`;
 
-      // Explosión de autores
       if (autoresUlima.length === 0) {
         filasExpandidas.push(filaBase);
       } else {
@@ -116,7 +107,6 @@ export async function POST(req: Request) {
           filaNueva['Autor(es) ULIMA'] = autor;
           filaNueva['Autor Ulima Nombre completo'] = autor;
           
-          // 💡 FILTRAR PARA QUE SOLO QUEDEN LAS COLUMNAS REQUERIDAS
           const orderedRow: any = {};
           FINAL_COLUMNS.forEach((col: string) => orderedRow[col] = filaNueva[col]);
           filasExpandidas.push(orderedRow);
@@ -124,7 +114,6 @@ export async function POST(req: Request) {
       }
     });
 
-    // 5. Generar Excel
     const newWb = XLSX.utils.book_new();
     const newWs = XLSX.utils.json_to_sheet(filasExpandidas, { header: FINAL_COLUMNS });
     XLSX.utils.book_append_sheet(newWb, newWs, "Nuevos_WoS");

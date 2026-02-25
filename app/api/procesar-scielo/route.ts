@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 
-// Borramos el FINAL_COLUMNS hardcodeado de aquí arriba
-
 const MAP = {
   'PT': 'Publication Type', 'AU': 'Authors', 'TI': 'Title', 'SO': 'Source',
   'LA': 'Language', 'DT': 'Document Type', 'DE': 'Author Keywords',
@@ -33,13 +31,11 @@ function extractUlimaAuthorsScielo(addressesText: string) {
 
 export async function POST(req: Request) {
   try {
-    // 💡 RECIBIMOS LAS COLUMNAS DINÁMICAS DEL FRONTEND AQUÍ
     const { fileScielo, fileIds, columns } = await req.json();
     if (!fileScielo || !fileIds) return NextResponse.json({ error: "Faltan archivos" }, { status: 400 });
 
     const FINAL_COLUMNS = columns && columns.length > 0 ? columns : [];
 
-    // 1. Leer TXT/CSV tabulado
     const scieloBuffer = Buffer.from(fileScielo.split(',')[1], 'base64');
     const scieloText = scieloBuffer.toString('utf-8').replace(/\r/g, ''); 
     const scieloRows = scieloText.split('\n').map(r => r.split('\t'));
@@ -51,7 +47,6 @@ export async function POST(req: Request) {
       return obj;
     });
 
-    // 2. Leer Excel de IDs y cruzar
     const idsBuffer = Buffer.from(fileIds.split(',')[1], 'base64');
     const workbookIds = XLSX.read(idsBuffer, { type: 'buffer' });
     const firstSheetName = workbookIds.SheetNames[0];
@@ -65,7 +60,6 @@ export async function POST(req: Request) {
       return id && !existingIds.has(id);
     });
 
-    // 3. Mapeo y Formateo a Dataset Maestro
     const finalRows: any[] = [];
     
     newRecords.forEach((row: any) => {
@@ -73,7 +67,6 @@ export async function POST(req: Request) {
       const ulimaAuthors = extractUlimaAuthorsScielo(rawInst);
       
       const baseRow: any = {};
-      // 💡 CREAR LA FILA CON LA ESTRUCTURA DINÁMICA
       FINAL_COLUMNS.forEach((col: string) => baseRow[col] = "");
       
       baseRow['SciELO Citation Index ID'] = row['Archive Location'] || row['UT'] || '';
@@ -115,7 +108,6 @@ export async function POST(req: Request) {
           newRow['Autor(es) ULIMA'] = author;
           newRow['Autor Ulima Nombre completo'] = author;
           
-          // 💡 FILTRAR PARA QUE SOLO QUEDEN LAS COLUMNAS REQUERIDAS
           const orderedRow: any = {};
           FINAL_COLUMNS.forEach((col: string) => orderedRow[col] = newRow[col]);
           finalRows.push(orderedRow);
@@ -123,7 +115,6 @@ export async function POST(req: Request) {
       }
     });
 
-    // 4. Generar Excel
     const newWb = XLSX.utils.book_new();
     const newWs = XLSX.utils.json_to_sheet(finalRows, { header: FINAL_COLUMNS });
     XLSX.utils.book_append_sheet(newWb, newWs, "Nuevos_SciELO");

@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import * as XLSX from 'xlsx';
-import Fuse from 'fuse.js';
 
 async function fetchScopusData(apiKey: string) {
   const baseUrl = "https://api.elsevier.com/content/search/scopus";
@@ -49,16 +47,10 @@ function processAuthors(authorsList: any[]) {
   };
 }
 
-function getBestColumnMatch(target: string, columns: string[]) {
-  const fuse = new Fuse(columns, { includeScore: true, threshold: 0.4 });
-  const result = fuse.search(target);
-  return result.length > 0 ? result[0].item : null;
-}
-
 export async function POST(req: Request) {
   try {
-    // Recibimos la data ya procesada por el frontend
-    const { apiKey, columns, existingIds = [], metaData = [] } = await req.json();
+    // Solo recibimos tu API Key y un arreglo de IDs en texto plano (Súper ligero)
+    const { apiKey, columns, existingIds = [] } = await req.json();
     
     if (!apiKey) return NextResponse.json({ error: "Falta API Key" }, { status: 400 });
 
@@ -75,7 +67,6 @@ export async function POST(req: Request) {
       FINAL_COLUMNS.forEach((col: string) => baseRow[col] = "");
 
       baseRow['Scopus ID'] = eidClean ? `2-s2.0-${eidClean}` : "";
-      baseRow['EID_TEMP'] = eidClean; 
       baseRow['Title'] = entry['dc:title'] || "";
       baseRow['Year'] = entry['prism:coverDate'] ? entry['prism:coverDate'].substring(0, 4) : "";
       baseRow['Source title'] = entry['prism:publicationName'] || "";
@@ -101,47 +92,8 @@ export async function POST(req: Request) {
       return baseRow;
     });
 
-    // Filtramos los IDs que ya existen (ahora usamos el Set que nos mandó el front)
     if (existingIdsSet.size > 0) {
       dfApi = dfApi.filter(row => !existingIdsSet.has(row['Scopus ID']));
-    }
-
-    // Procesamos la metadata si el front nos la mandó
-    if (metaData.length > 0) {
-      const csvColumns = Object.keys(metaData[0] || {});
-      const colEidCsv = getBestColumnMatch('EID', csvColumns);
-
-      if (colEidCsv) {
-        const metaDict: Record<string, any> = {};
-        metaData.forEach((row: any) => {
-          const rawCsvEid = String(row[colEidCsv] || '');
-          const cleanCsvEid = rawCsvEid.includes('-') ? rawCsvEid.split('-').pop() : rawCsvEid;
-          if (cleanCsvEid) metaDict[cleanCsvEid] = row;
-        });
-
-        const mappingIdeal = {
-          'Publisher': 'Publisher',
-          'Language of Original Document': 'Language',
-          'Open Access': 'Open Access',
-          'Publication Stage': 'Estado de publicación'
-        };
-
-        const mapeoReal: Record<string, string> = {};
-        for (const [ideal, final] of Object.entries(mappingIdeal)) {
-          const realCol = getBestColumnMatch(ideal, csvColumns);
-          if (realCol) mapeoReal[realCol] = final;
-        }
-
-        dfApi = dfApi.map(row => {
-          const matchRow = metaDict[row.EID_TEMP];
-          if (matchRow) {
-            for (const [realCol, finalCol] of Object.entries(mapeoReal)) {
-              row[finalCol] = matchRow[realCol] || "";
-            }
-          }
-          return row;
-        });
-      }
     }
 
     const finalRows: any[] = [];
@@ -151,7 +103,6 @@ export async function POST(req: Request) {
       const docArr = row['Autor(es) del documento'] ? String(row['Autor(es) del documento']).split(',').map(s => s.trim()) : [];
 
       if (ulimaArr.length === 0 || !ulimaArr[0]) {
-        delete row.EID_TEMP;
         finalRows.push(row);
         return;
       }
@@ -163,7 +114,6 @@ export async function POST(req: Request) {
         const newRow = { ...row };
         newRow['Autor Ulima Nombre completo'] = auUlima;
         newRow['Scopus Author Id'] = mapIds[auUlima] || '';
-        delete newRow.EID_TEMP;
         
         const orderedRow: any = {};
         FINAL_COLUMNS.forEach((col: string) => {
@@ -173,17 +123,10 @@ export async function POST(req: Request) {
       });
     });
 
-    const newWb = XLSX.utils.book_new();
-    const newWs = XLSX.utils.json_to_sheet(finalRows, { header: FINAL_COLUMNS });
-    XLSX.utils.book_append_sheet(newWb, newWs, "Scopus_Update");
-    
-    const excelBase64 = XLSX.write(newWb, { type: 'base64', bookType: 'xlsx' });
-
+    // Retornamos los datos planos, ¡sin armar excel!
     return NextResponse.json({
       message: "Proceso exitoso",
-      nuevos_registros: finalRows.length,
-      file: excelBase64,
-      previewData: finalRows.slice(0, 5) 
+      data: finalRows 
     });
 
   } catch (error: any) {

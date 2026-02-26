@@ -127,11 +127,9 @@ export default function GestorBibliometria() {
 
       } else if (activeTab === 'scopus') {
         
-        setProgressMsg('Leyendo archivos locales...');
-        
+        setProgressMsg('Leyendo IDs existentes localmente...');
         let existingIds: string[] = [];
-        let metaData: any[] = [];
-
+        
         if (file1) {
           const buffer = await file1.arrayBuffer();
           const wb = XLSX.read(buffer);
@@ -139,31 +137,84 @@ export default function GestorBibliometria() {
           existingIds = data.map((r: any) => r['Scopus ID'] ? String(r['Scopus ID']) : null).filter(Boolean) as string[];
         }
 
-        if (file2) {
-          const buffer = await file2.arrayBuffer();
-          const wb = XLSX.read(buffer);
-          metaData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-        }
+        setProgressMsg('Consultando API de Scopus (Descargando registros nuevos)...');
 
-        setProgressMsg('Consultando API de Scopus...');
-
-        const payload = {
-          apiKey,
-          columns,
-          existingIds,
-          metaData
-        };
-
+        // Enviamos a Vercel solo el API Key y la lista de IDs (A prueba de peso límite)
+        const payload = { apiKey, columns, existingIds };
         const response = await fetch('/api/procesar-scopus', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
 
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Error en el servidor');
+        const respData = await response.json();
+        if (!response.ok) throw new Error(respData.error || 'Error en el servidor');
         
-        setResultData({ count: data.nuevos_registros, file: data.file, preview: data.previewData });
+        let newRecords = respData.data;
+
+        // Si hay registros nuevos y subiste el CSV, cruzamos en el frontend
+        if (file2 && newRecords.length > 0) {
+          setProgressMsg('Cruzando con metadatos CSV localmente...');
+          
+          const buffer = await file2.arrayBuffer();
+          const wb = XLSX.read(buffer);
+          const metaData: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+          if (metaData.length > 0) {
+            const csvColumns = Object.keys(metaData[0]);
+
+            // Función local para buscar columnas
+            const getBestCol = (target: string) => {
+              const exact = csvColumns.find(c => c.toLowerCase().trim() === target.toLowerCase());
+              return exact || csvColumns.find(c => c.toLowerCase().includes(target.toLowerCase()));
+            };
+
+            const colEidCsv = getBestCol('eid');
+
+            if (colEidCsv) {
+              const metaDict: Record<string, any> = {};
+              metaData.forEach(row => {
+                const rawCsvEid = String(row[colEidCsv] || '');
+                const cleanCsvEid = rawCsvEid.includes('-') ? rawCsvEid.split('-').pop() : rawCsvEid;
+                if (cleanCsvEid) metaDict[cleanCsvEid] = row;
+              });
+
+              const mapeoReal: Record<string, string> = {};
+              const targets = [
+                { ideal: 'publisher', final: 'Publisher' },
+                { ideal: 'language of original', final: 'Language' },
+                { ideal: 'open access', final: 'Open Access' },
+                { ideal: 'publication stage', final: 'Estado de publicación' }
+              ];
+
+              targets.forEach(t => {
+                const foundCol = getBestCol(t.ideal);
+                if (foundCol) mapeoReal[foundCol] = t.final;
+              });
+
+              newRecords = newRecords.map((row: any) => {
+                const eidStr = String(row['Scopus ID'] || '');
+                const cleanEid = eidStr.includes('-') ? eidStr.split('-').pop() : eidStr;
+
+                const matchRow = metaDict[cleanEid || ''];
+                if (matchRow) {
+                  for (const [realCol, finalCol] of Object.entries(mapeoReal)) {
+                    row[finalCol] = matchRow[realCol] || "";
+                  }
+                }
+                return row;
+              });
+            }
+          }
+        }
+
+        setProgressMsg('Generando archivo Excel final...');
+        const newWb = XLSX.utils.book_new();
+        const newWs = XLSX.utils.json_to_sheet(newRecords, { header: columns });
+        XLSX.utils.book_append_sheet(newWb, newWs, "Scopus_Update");
+        const excelBase64 = XLSX.write(newWb, { type: 'base64', bookType: 'xlsx' });
+
+        setResultData({ count: newRecords.length, file: excelBase64, preview: newRecords.slice(0, 5) });
         setStatus('success');
 
       } else {

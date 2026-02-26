@@ -127,18 +127,37 @@ export default function GestorBibliometria() {
 
       } else if (activeTab === 'scopus') {
         
-        // --- NUEVO ENRUTAMIENTO CON FORMDATA PARA SCOPUS ---
-        const formData = new FormData();
-        formData.append('apiKey', apiKey);
-        formData.append('columns', JSON.stringify(columns));
+        setProgressMsg('Leyendo archivos locales...');
         
-        if (file1) formData.append('fileBase', file1);
-        if (file2) formData.append('fileMeta', file2);
+        let existingIds: string[] = [];
+        let metaData: any[] = [];
+
+        if (file1) {
+          const buffer = await file1.arrayBuffer();
+          const wb = XLSX.read(buffer);
+          const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+          existingIds = data.map((r: any) => r['Scopus ID'] ? String(r['Scopus ID']) : null).filter(Boolean) as string[];
+        }
+
+        if (file2) {
+          const buffer = await file2.arrayBuffer();
+          const wb = XLSX.read(buffer);
+          metaData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        }
+
+        setProgressMsg('Consultando API de Scopus...');
+
+        const payload = {
+          apiKey,
+          columns,
+          existingIds,
+          metaData
+        };
 
         const response = await fetch('/api/procesar-scopus', {
           method: 'POST',
-          body: formData 
-          // Ojo: El navegador establece automáticamente el header 'multipart/form-data'
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         });
 
         const data = await response.json();
@@ -149,10 +168,9 @@ export default function GestorBibliometria() {
 
       } else {
         
-        // --- MANTENEMOS BASE64 PARA WOS Y SCIELO ---
         const payload: any = { apiKey, columns }; 
         if (file1) payload[activeTab === 'wos' ? 'fileWos' : 'fileScielo'] = await toBase64(file1);
-        if (file2) payload[activeTab === 'wos' ? 'fileIds' : 'fileMeta'] = await toBase64(file2); // SciELO también enviará su archivo 2 en Base64
+        if (file2) payload[activeTab === 'wos' ? 'fileIds' : 'fileMeta'] = await toBase64(file2);
 
         const response = await fetch(`/api/procesar-${activeTab}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)

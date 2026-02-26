@@ -57,20 +57,13 @@ function getBestColumnMatch(target: string, columns: string[]) {
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
+    // Recibimos la data ya procesada por el frontend
+    const { apiKey, columns, existingIds = [], metaData = [] } = await req.json();
     
-    const apiKey = formData.get('apiKey') as string | null;
-    const columnsStr = formData.get('columns') as string | null;
-    const fileBase = formData.get('fileBase') as File | null;
-    const fileMeta = formData.get('fileMeta') as File | null;
-
     if (!apiKey) return NextResponse.json({ error: "Falta API Key" }, { status: 400 });
 
-    let columns: string[] = [];
-    if (columnsStr) {
-      try { columns = JSON.parse(columnsStr); } catch (e) {}
-    }
     const FINAL_COLUMNS = columns && columns.length > 0 ? columns : [];
+    const existingIdsSet = new Set(existingIds.map(String));
 
     const rawEntries = await fetchScopusData(apiKey);
     let dfApi = rawEntries.map(entry => {
@@ -108,56 +101,46 @@ export async function POST(req: Request) {
       return baseRow;
     });
 
-    if (fileBase) {
-      const arrayBuffer = await fileBase.arrayBuffer();
-      const baseBuffer = Buffer.from(arrayBuffer);
-      const workbookBase = XLSX.read(baseBuffer, { type: 'buffer' });
-      const baseData: any[] = XLSX.utils.sheet_to_json(workbookBase.Sheets[workbookBase.SheetNames[0]]);
-      const existingIds = new Set(baseData.map(row => String(row['Scopus ID'])));
-      dfApi = dfApi.filter(row => !existingIds.has(row['Scopus ID']));
+    // Filtramos los IDs que ya existen (ahora usamos el Set que nos mandó el front)
+    if (existingIdsSet.size > 0) {
+      dfApi = dfApi.filter(row => !existingIdsSet.has(row['Scopus ID']));
     }
 
-    if (fileMeta) {
-      const arrayBuffer = await fileMeta.arrayBuffer();
-      const metaBuffer = Buffer.from(arrayBuffer);
-      const workbookMeta = XLSX.read(metaBuffer, { type: 'buffer' });
-      const metaData: any[] = XLSX.utils.sheet_to_json(workbookMeta.Sheets[workbookMeta.SheetNames[0]]);
-      
-      if (metaData.length > 0) {
-        const csvColumns = Object.keys(metaData[0]);
-        const colEidCsv = getBestColumnMatch('EID', csvColumns);
+    // Procesamos la metadata si el front nos la mandó
+    if (metaData.length > 0) {
+      const csvColumns = Object.keys(metaData[0] || {});
+      const colEidCsv = getBestColumnMatch('EID', csvColumns);
 
-        if (colEidCsv) {
-          const metaDict: Record<string, any> = {};
-          metaData.forEach(row => {
-            const rawCsvEid = String(row[colEidCsv] || '');
-            const cleanCsvEid = rawCsvEid.includes('-') ? rawCsvEid.split('-').pop() : rawCsvEid;
-            if (cleanCsvEid) metaDict[cleanCsvEid] = row;
-          });
+      if (colEidCsv) {
+        const metaDict: Record<string, any> = {};
+        metaData.forEach((row: any) => {
+          const rawCsvEid = String(row[colEidCsv] || '');
+          const cleanCsvEid = rawCsvEid.includes('-') ? rawCsvEid.split('-').pop() : rawCsvEid;
+          if (cleanCsvEid) metaDict[cleanCsvEid] = row;
+        });
 
-          const mappingIdeal = {
-            'Publisher': 'Publisher',
-            'Language of Original Document': 'Language',
-            'Open Access': 'Open Access',
-            'Publication Stage': 'Estado de publicación'
-          };
+        const mappingIdeal = {
+          'Publisher': 'Publisher',
+          'Language of Original Document': 'Language',
+          'Open Access': 'Open Access',
+          'Publication Stage': 'Estado de publicación'
+        };
 
-          const mapeoReal: Record<string, string> = {};
-          for (const [ideal, final] of Object.entries(mappingIdeal)) {
-            const realCol = getBestColumnMatch(ideal, csvColumns);
-            if (realCol) mapeoReal[realCol] = final;
-          }
-
-          dfApi = dfApi.map(row => {
-            const matchRow = metaDict[row.EID_TEMP];
-            if (matchRow) {
-              for (const [realCol, finalCol] of Object.entries(mapeoReal)) {
-                row[finalCol] = matchRow[realCol] || "";
-              }
-            }
-            return row;
-          });
+        const mapeoReal: Record<string, string> = {};
+        for (const [ideal, final] of Object.entries(mappingIdeal)) {
+          const realCol = getBestColumnMatch(ideal, csvColumns);
+          if (realCol) mapeoReal[realCol] = final;
         }
+
+        dfApi = dfApi.map(row => {
+          const matchRow = metaDict[row.EID_TEMP];
+          if (matchRow) {
+            for (const [realCol, finalCol] of Object.entries(mapeoReal)) {
+              row[finalCol] = matchRow[realCol] || "";
+            }
+          }
+          return row;
+        });
       }
     }
 

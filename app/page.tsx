@@ -212,7 +212,8 @@ export default function GestorBibliometria() {
           let totalCitationsRange = 0;
           const updatedPaper: any = { ...paper };
           
-          for (let y = sYear; y <= eYear; y++) {
+          // AQUÍ ESTÁ LA CORRECCIÓN CLAVE: usamos sY y eY en lugar de sYear y eYear
+          for (let y = sY; y <= eY; y++) {
             let citations = 0;
             if (paper.cleanId) {
               citations = await getCitationsInYearNavegador(paper.cleanId, y, apiKey);
@@ -221,7 +222,7 @@ export default function GestorBibliometria() {
             totalCitationsRange += citations;
           }
           
-          if (sYear !== eYear) updatedPaper['Total Periodo'] = totalCitationsRange;
+          if (sY !== eY) updatedPaper['Total Periodo'] = totalCitationsRange;
           updatedPaper['_sort_value'] = totalCitationsRange;
           delete updatedPaper.cleanId; 
           
@@ -386,11 +387,9 @@ export default function GestorBibliometria() {
         setStatus('success');
 
       } else {
-        // --- AQUÍ ESTÁ EL FIX PARA WOS Y SCIELO ---
         const payload: any = { apiKey, columns }; 
         if (file1) payload[activeTab === 'wos' ? 'fileWos' : 'fileScielo'] = await toBase64(file1);
         
-        // Antes decía 'fileMeta' para SciELO, ahora pasará el nombre correcto 'fileIds'
         if (file2) payload[(activeTab === 'wos' || activeTab === 'scielo') ? 'fileIds' : 'fileMeta'] = await toBase64(file2);
 
         const response = await fetch(`/api/procesar-${activeTab}`, {

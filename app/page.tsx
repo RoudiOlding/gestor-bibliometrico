@@ -9,7 +9,7 @@ const DEFAULT_COLUMNS = [
   'Scopus ID', 'WOS ID', 'SciELO Citation Index ID', 'Title', 'Repositorio C', 'Origen de la publicación', 'Prof investigador: NivelA_nivelB', 'Incentivos', 'Autor(es) del documento', 'Autor(es) ULIMA', 'Autor ulima no definido C', 'Código de trabajador', 'Autor Ulima Nombre completo', 'Categoría del autor J - C', 'Unidad', 'Subunidad', 'Tipo docente', 'Dedicación docente', 'Publicación con alumno', 'Obtención de grado/título C', 'Number of Authors', 'Scopus Author Id', 'Scopus Author Ids', 'Fecha de envío / recibido', 'Fecha de aceptación', 'Fecha límite de envío (conferencia)', 'Fecha de celebración (conferencia)', 'Year', 'Estado de publicación', 'Source title', 'Publisher', 'Volume', 'Issue', 'Pages', 'Article number', 'ISSN', 'eISSN', 'ISBN', 'Source type', 'Language', 'Field-Weighted View Impact', 'Views', 'Citations', 'Field-Weighted Citation Impact', 'Field-Citation Average', 'Citas recibidas en 2024', 'Citas 2025 1er trimestre', 'Citas 2025 3er trimestre hasta set', 'Citas 2025 al 20/08/25', 'Citas 2025 al 14/11/25', 'Citas 2025 al 01/12/25', 'DOI', 'Enlace DOI', 'URL', 'Publication type', 'Open Access', 'Institutions', 'Number of Institutions', 'Autor+afiliación', 'Scopus Affiliation names', 'Country/Region', 'Number of Countries/Regions', 'Colaboración', 'Sustainable Development Goals (2023)', 'WoS INDEX', 'SciELO País', 'Observaciones', 'Sustento', 'Base de datos', 'Fecha de envío a Respositorio | Fecha de validación', 'F ingreso/actualización'
 ];
 
-// --- HACK DEL FRONTEND: LA PETICIÓN SALE DE TU NAVEGADOR Y USA VIEW=STANDARD ---
+// --- FUNCIONES DEL FRONTEND (SCOPUS Y CITAS) ---
 
 async function fetchScopusData(apiKey: string) {
   const baseUrl = "https://api.elsevier.com/content/search/scopus";
@@ -19,7 +19,6 @@ async function fetchScopusData(apiKey: string) {
   const count = 25;
 
   while (true) {
-    // CAMBIO CLAVE: view=STANDARD para evitar el 401 Unauthorized
     const res = await fetch(`${baseUrl}?query=${encodeURIComponent(query)}&count=${count}&start=${start}&view=STANDARD&sort=coverDate`, {
       headers: { 'X-ELS-APIKey': apiKey, 'Accept': 'application/json' }
     });
@@ -33,6 +32,65 @@ async function fetchScopusData(apiKey: string) {
     start += count;
   }
   return allPublications;
+}
+
+async function getCitasListaNavegador(apiKey: string) {
+  const baseUrl = "https://api.elsevier.com/content/search/scopus";
+  let allPublications: any[] = [];
+  let start = 0;
+  const count = 25;
+  
+  while (true) {
+    const query = 'AF-ID(60078115)';
+    const url = `${baseUrl}?query=${encodeURIComponent(query)}&count=${count}&start=${start}&view=STANDARD&sort=coverDate`;
+    const res = await fetch(url, {
+      headers: { 'X-ELS-APIKey': apiKey.trim(), 'Accept': 'application/json' }
+    });
+    
+    if (!res.ok) throw new Error("Error conectando con Scopus (Extracción de lista)");
+    
+    const data = await res.json();
+    const entries = data['search-results']?.entry || [];
+    if (entries.length === 0) break;
+    
+    allPublications.push(...entries);
+    const total = parseInt(data['search-results']['opensearch:totalResults'] || '0', 10);
+    if (allPublications.length >= total) break;
+    start += count;
+  }
+
+  return allPublications.map(entry => {
+      const scopusId = entry['dc:identifier'] || '';
+      return {
+        'Título': entry['dc:title'] || 'N/A',
+        'EID': (entry['eid'] || '').replace('2-s2.0-', ''),
+        'Scopus ID': scopusId,
+        'cleanId': scopusId.replace('SCOPUS_ID:', ''),
+        'Año': entry['prism:coverDate']?.substring(0, 4) || '',
+        'Total Histórico': parseInt(entry['citedby-count'] || '0', 10)
+      };
+  });
+}
+
+async function getCitationsInYearNavegador(cleanId: string, year: number, apiKey: string): Promise<number> {
+  const baseUrl = "https://api.elsevier.com/content/search/scopus";
+  const query = `REF(${cleanId}) AND PUBYEAR = ${year}`;
+  const url = `${baseUrl}?query=${encodeURIComponent(query)}&count=1`;
+  
+  try {
+    const res = await fetch(url, { 
+      headers: { 'X-ELS-APIKey': apiKey.trim(), 'Accept': 'application/json' }
+    });
+    if (res.status === 429) {
+      await new Promise(r => setTimeout(r, 1000));
+      return getCitationsInYearNavegador(cleanId, year, apiKey);
+    }
+    if (res.status === 200) {
+      const data = await res.json();
+      return parseInt(data['search-results']?.['opensearch:totalResults'] || '0', 10);
+    }
+    return 0;
+  } catch { return 0; }
 }
 
 function processAuthors(authorsList: any[]) {
@@ -141,34 +199,38 @@ export default function GestorBibliometria() {
 
     try {
       if (activeTab === 'citas') {
-        setProgressMsg('Obteniendo lista de publicaciones históricas...');
-        const resList = await fetch('/api/citas-lista', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey })
-        });
-        const listData = await resList.json();
-        if (!resList.ok) throw new Error(listData.error);
+        setProgressMsg('Obteniendo lista de publicaciones (Conexión directa desde navegador)...');
         
-        const publications = listData.publications;
+        const publications = await getCitasListaNavegador(apiKey);
         const totalPubs = publications.length;
         const processed = [];
-        const BATCH_SIZE = 10;
         const sY = parseInt(startYear);
         const eY = yearMode === 'single' ? sY : parseInt(endYear);
 
-        for (let i = 0; i < totalPubs; i += BATCH_SIZE) {
-          const batch = publications.slice(i, i + BATCH_SIZE);
-          const resBatch = await fetch('/api/citas-batch', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apiKey, papers: batch, sYear: sY, eYear: eY })
-          });
-          const batchData = await resBatch.json();
-          if (!resBatch.ok) throw new Error(batchData.error);
+        for (let i = 0; i < totalPubs; i++) {
+          const paper = publications[i];
+          let totalCitationsRange = 0;
+          const updatedPaper: any = { ...paper };
           
-          processed.push(...batchData.results);
+          for (let y = sYear; y <= eYear; y++) {
+            let citations = 0;
+            if (paper.cleanId) {
+              citations = await getCitationsInYearNavegador(paper.cleanId, y, apiKey);
+            }
+            updatedPaper[`Citas ${y}`] = citations;
+            totalCitationsRange += citations;
+          }
           
-          const current = Math.min(i + BATCH_SIZE, totalPubs);
-          setProgressMsg(`Analizando paper ${current} de ${totalPubs}...`);
-          setProgressVal(Math.round((current / totalPubs) * 100));
+          if (sYear !== eYear) updatedPaper['Total Periodo'] = totalCitationsRange;
+          updatedPaper['_sort_value'] = totalCitationsRange;
+          delete updatedPaper.cleanId; 
+          
+          processed.push(updatedPaper);
+          
+          setProgressMsg(`Analizando paper ${i + 1} de ${totalPubs}...`);
+          setProgressVal(Math.round(((i + 1) / totalPubs) * 100));
+
+          await new Promise(r => setTimeout(r, 100)); 
         }
 
         setProgressMsg('Ordenando resultados y generando archivo...');
@@ -183,7 +245,6 @@ export default function GestorBibliometria() {
         setStatus('success');
 
       } else if (activeTab === 'scopus') {
-        // === LÓGICA FRONTEND 100% PARA SCOPUS ===
         setProgressMsg('Leyendo IDs y metadatos locales...');
         let existingIds: string[] = [];
         let metaData: any[] = [];
@@ -325,9 +386,12 @@ export default function GestorBibliometria() {
         setStatus('success');
 
       } else {
+        // --- AQUÍ ESTÁ EL FIX PARA WOS Y SCIELO ---
         const payload: any = { apiKey, columns }; 
         if (file1) payload[activeTab === 'wos' ? 'fileWos' : 'fileScielo'] = await toBase64(file1);
-        if (file2) payload[activeTab === 'wos' ? 'fileIds' : 'fileMeta'] = await toBase64(file2);
+        
+        // Antes decía 'fileMeta' para SciELO, ahora pasará el nombre correcto 'fileIds'
+        if (file2) payload[(activeTab === 'wos' || activeTab === 'scielo') ? 'fileIds' : 'fileMeta'] = await toBase64(file2);
 
         const response = await fetch(`/api/procesar-${activeTab}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
